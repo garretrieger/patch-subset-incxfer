@@ -21,6 +21,7 @@
 #include "woff2/output.h"
 
 using absl::btree_set;
+using absl::flat_hash_map;
 using absl::flat_hash_set;
 using absl::Status;
 using absl::StatusOr;
@@ -379,7 +380,8 @@ StatusOr<FontData> Encoder::Encode(const SubsetDefinition& base_subset,
 
   // The first subset forms the base file, the remaining subsets are made
   // reachable via patches.
-  auto base = CutSubset(face_, base_subset);
+  flat_hash_map<uint32_t, uint32_t> gid_map;
+  auto base = CutSubset(face_, base_subset, gid_map);
   if (!base.ok()) {
     return base.status();
   }
@@ -390,8 +392,6 @@ StatusOr<FontData> Encoder::Encode(const SubsetDefinition& base_subset,
     return base;
   }
 
-  // TODO(garretrieger): if not retain gids, then insert a gid map into the IFT
-  // table.
   IFTTable table;
   table.SetUrlTemplate(UrlTemplate());
   auto sc = table.SetId(Id());
@@ -403,6 +403,10 @@ StatusOr<FontData> Encoder::Encode(const SubsetDefinition& base_subset,
   sc = PopulateIftbPatchMap(patch_map);
   if (!sc.ok()) {
     return sc;
+  }
+
+  if (IsMixedMode() && !retain_gids_in_mixed_mode_) {
+    table.GetGlyphMap() = gid_map;
   }
 
   std::vector<uint32_t> ids;
@@ -461,8 +465,9 @@ StatusOr<FontData> Encoder::Encode(const SubsetDefinition& base_subset,
   return base;
 }
 
-StatusOr<FontData> Encoder::CutSubset(hb_face_t* font,
-                                      const SubsetDefinition& def) {
+StatusOr<FontData> Encoder::CutSubset(
+    hb_face_t* font, const SubsetDefinition& def,
+    flat_hash_map<uint32_t, uint32_t>& gid_map) {
   hb_subset_input_t* input = hb_subset_input_create_or_fail();
   if (!input) {
     return absl::InternalError("Failed to create subset input.");
@@ -473,20 +478,32 @@ StatusOr<FontData> Encoder::CutSubset(hb_face_t* font,
   if (IsMixedMode()) {
     // Mixed mode requires stable gids and IFTB requirements to be met,
     // set flags accordingly.
-    // TODO(garretrieger): retain gids is optional based on
-    // 'retain_gids_in_mixed_mode_'
-    hb_subset_input_set_flags(
-        input, HB_SUBSET_FLAGS_RETAIN_GIDS | HB_SUBSET_FLAGS_IFTB_REQUIREMENTS |
-                   HB_SUBSET_FLAGS_NOTDEF_OUTLINE |
-                   HB_SUBSET_FLAGS_PASSTHROUGH_UNRECOGNIZED);
+    hb_subset_input_set_flags(input,
+                              HB_SUBSET_FLAGS_IFTB_REQUIREMENTS |
+                                  HB_SUBSET_FLAGS_NOTDEF_OUTLINE |
+                                  HB_SUBSET_FLAGS_PASSTHROUGH_UNRECOGNIZED);
+    if (retain_gids_in_mixed_mode_) {
+      hb_subset_input_set_flags(input, hb_subset_input_get_flags(input) |
+                                           HB_SUBSET_FLAGS_RETAIN_GIDS);
+    }
   }
 
-  hb_face_t* result = hb_subset_or_fail(font, input);
+  hb_subset_plan_t* plan = hb_subset_plan_create_or_fail(font, input);
+  int index = -1;
+  uint32_t old_gid;
+  uint32_t new_gid;
+  hb_map_t* old_to_new = hb_subset_plan_old_to_new_glyph_mapping(plan);
+  while (hb_map_next(old_to_new, &index, &old_gid, &new_gid)) {
+    gid_map[old_gid] = new_gid;
+  }
+
+  hb_face_t* result = hb_subset_plan_execute_or_fail(plan);
   FontHelper::ApplyIftbTableOrdering(result);
   hb_blob_t* blob = hb_face_reference_blob(result);
 
   FontData subset(blob);
 
+  hb_subset_plan_destroy(plan);
   hb_blob_destroy(blob);
   hb_face_destroy(result);
   hb_subset_input_destroy(input);

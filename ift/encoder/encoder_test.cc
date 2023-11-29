@@ -507,6 +507,79 @@ TEST_F(EncoderTest, Encode_ThreeSubsets_Mixed) {
   ASSERT_TRUE(entry2.coverage.codepoints.contains(chunk4_cp));
 }
 
+TEST_F(EncoderTest, Encode_ThreeSubsets_Mixed_NoRetainGids) {
+  Encoder encoder;
+  {
+    hb_face_t* face = noto_sans_jp.reference_face();
+    encoder.SetFace(face);
+    hb_face_destroy(face);
+  }
+
+  encoder.SetMixedModeRetainGids(false);
+  auto s = encoder.AddExistingIftbPatch(1, chunk1);
+  s.Update(encoder.AddExistingIftbPatch(2, chunk2));
+  s.Update(encoder.AddExistingIftbPatch(3, chunk3));
+  s.Update(encoder.AddExistingIftbPatch(4, chunk4));
+  ASSERT_TRUE(s.ok()) << s;
+
+  s.Update(encoder.SetBaseSubsetFromIftbPatches({1, 2}));
+  s.Update(encoder.AddExtensionSubsetOfIftbPatches({3, 4}));
+  ASSERT_TRUE(s.ok()) << s;
+
+  auto base = encoder.Encode();
+
+  ASSERT_TRUE(base.ok()) << base.status();
+  auto cps = ToCodepointsSet(*base);
+  ASSERT_TRUE(cps.contains(chunk0_cp));
+  ASSERT_TRUE(cps.contains(chunk1_cp));
+  ASSERT_TRUE(cps.contains(chunk2_cp));
+  ASSERT_FALSE(cps.contains(chunk3_cp));
+  ASSERT_FALSE(cps.contains(chunk4_cp));
+
+  ASSERT_EQ(encoder.Patches().size(), 1);
+
+  {
+    hb_face_t* face = base->reference_face();
+    auto iftx_data = FontHelper::TableData(face, HB_TAG('I', 'F', 'T', 'X'));
+    ASSERT_FALSE(iftx_data.empty());
+    hb_face_destroy(face);
+  }
+
+  auto ift_table = IFTTable::FromFont(*base);
+  ASSERT_TRUE(ift_table.ok()) << ift_table.status();
+  ASSERT_FALSE(ift_table->GetGlyphMap().empty());
+
+  // expected patches:
+  // - chunk 3 (iftb)
+  // - chunk 4 (iftb)
+  // - shared brotli to (chunk 3 + 4)
+  ASSERT_EQ(ift_table->GetPatchMap().GetEntries().size(), 3);
+
+  const auto& entry0 = ift_table->GetPatchMap().GetEntries()[0];
+  ASSERT_EQ(entry0.patch_index, 3);
+  ASSERT_FALSE(entry0.coverage.codepoints.contains(chunk0_cp));
+  ASSERT_FALSE(entry0.coverage.codepoints.contains(chunk1_cp));
+  ASSERT_FALSE(entry0.coverage.codepoints.contains(chunk2_cp));
+  ASSERT_TRUE(entry0.coverage.codepoints.contains(chunk3_cp));
+  ASSERT_FALSE(entry0.coverage.codepoints.contains(chunk4_cp));
+
+  const auto& entry1 = ift_table->GetPatchMap().GetEntries()[1];
+  ASSERT_EQ(entry1.patch_index, 4);
+  ASSERT_FALSE(entry1.coverage.codepoints.contains(chunk0_cp));
+  ASSERT_FALSE(entry1.coverage.codepoints.contains(chunk1_cp));
+  ASSERT_FALSE(entry1.coverage.codepoints.contains(chunk2_cp));
+  ASSERT_FALSE(entry1.coverage.codepoints.contains(chunk3_cp));
+  ASSERT_TRUE(entry1.coverage.codepoints.contains(chunk4_cp));
+
+  const auto& entry2 = ift_table->GetPatchMap().GetEntries()[2];
+  ASSERT_EQ(entry2.patch_index, 5);
+  ASSERT_FALSE(entry2.coverage.codepoints.contains(chunk0_cp));
+  ASSERT_FALSE(entry2.coverage.codepoints.contains(chunk1_cp));
+  ASSERT_FALSE(entry2.coverage.codepoints.contains(chunk2_cp));
+  ASSERT_TRUE(entry2.coverage.codepoints.contains(chunk3_cp));
+  ASSERT_TRUE(entry2.coverage.codepoints.contains(chunk4_cp));
+}
+
 TEST_F(EncoderTest, Encode_ThreeSubsets_Mixed_WithFeatureMappings) {
   Encoder encoder;
   {

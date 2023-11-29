@@ -223,8 +223,9 @@ class Encoder {
 
   absl::Status PopulateIftbPatchMap(ift::proto::PatchMap& patch_map);
 
-  absl::StatusOr<common::FontData> CutSubset(hb_face_t* font,
-                                             const SubsetDefinition& def);
+  absl::StatusOr<common::FontData> CutSubset(
+      hb_face_t* font, const SubsetDefinition& def,
+      absl::flat_hash_map<uint32_t, uint32_t>& gid_map);
 
   common::BrotliBinaryDiff binary_diff_;
   ift::PerTableBrotliBinaryDiff per_table_binary_diff_;
