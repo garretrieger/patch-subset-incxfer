@@ -93,6 +93,22 @@ flat_hash_map<uint32_t, uint32_t> FontHelper::GidToUnicodeMap(hb_face_t* face) {
   return gid_to_unicode;
 }
 
+flat_hash_map<uint32_t, uint32_t> FontHelper::UnicodeToGidMap(hb_face_t* face) {
+  hb_map_t* unicode_to_gid_hb = hb_map_create();
+  hb_face_collect_nominal_glyph_mapping(face, unicode_to_gid_hb, nullptr);
+
+  flat_hash_map<uint32_t, uint32_t> unicode_to_gid;
+  int index = -1;
+  uint32_t cp = HB_MAP_VALUE_INVALID;
+  uint32_t gid = HB_MAP_VALUE_INVALID;
+  while (hb_map_next(unicode_to_gid_hb, &index, &cp, &gid)) {
+    unicode_to_gid[cp] = gid;
+  }
+
+  hb_map_destroy(unicode_to_gid_hb);
+  return unicode_to_gid;
+}
+
 absl::flat_hash_set<hb_tag_t> FontHelper::GetTags(hb_face_t* face) {
   absl::flat_hash_set<hb_tag_t> tag_set;
   constexpr uint32_t max_tags = 64;

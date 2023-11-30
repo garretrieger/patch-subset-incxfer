@@ -135,6 +135,17 @@ TEST_F(FontHelperTest, GidToUnicodeMap) {
   ASSERT_EQ(map, expected);
 }
 
+TEST_F(FontHelperTest, UnicodeToGidMap) {
+  auto map = FontHelper::UnicodeToGidMap(roboto_ab.get());
+
+  absl::flat_hash_map<uint32_t, uint32_t> expected = {
+      {0x61, 69},
+      {0x62, 70},
+  };
+
+  ASSERT_EQ(map, expected);
+}
+
 TEST_F(FontHelperTest, GetTags) {
   auto s = FontHelper::GetTags(roboto_ab.get());
   ASSERT_TRUE(s.contains(FontHelper::kLoca));

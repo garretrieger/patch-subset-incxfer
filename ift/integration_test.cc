@@ -419,6 +419,64 @@ TEST_F(IntegrationTest, MixedMode) {
   ASSERT_TRUE(!FontHelper::GlyfData(face.get(), chunk4_gid)->empty());
 }
 
+TEST_F(IntegrationTest, MixedMode_NoRetainGids) {
+  Encoder encoder;
+  auto sc = InitEncoderForIftb(encoder);
+  ASSERT_TRUE(sc.ok()) << sc;
+
+  // target paritions: {{0, 1}, {2}, {3, 4}}
+  encoder.SetMixedModeRetainGids(false);
+  sc = encoder.SetBaseSubsetFromIftbPatches({1});
+  sc.Update(encoder.AddExtensionSubsetOfIftbPatches({2}));
+  sc.Update(encoder.AddExtensionSubsetOfIftbPatches({3, 4}));
+  ASSERT_TRUE(sc.ok()) << sc;
+
+  auto encoded = encoder.Encode();
+  ASSERT_TRUE(encoded.ok()) << encoded.status();
+
+  auto codepoints = ToCodepointsSet(*encoded);
+  ASSERT_TRUE(codepoints.contains(chunk0_cp));
+  ASSERT_TRUE(codepoints.contains(chunk1_cp));
+  ASSERT_FALSE(codepoints.contains(chunk2_cp));
+  ASSERT_FALSE(codepoints.contains(chunk3_cp));
+  ASSERT_FALSE(codepoints.contains(chunk4_cp));
+
+  auto client = IFTClient::NewClient(std::move(*encoded));
+  ASSERT_TRUE(client.ok()) << client.status();
+
+  sc = client->AddDesiredCodepoints({chunk3_cp, chunk4_cp});
+  ASSERT_TRUE(sc.ok()) << sc;
+
+  auto patches = client->PatchesNeeded();
+  ASSERT_EQ(patches.size(), 3);  // 1 shared brotli and 2 iftb.
+
+  sc = AddPatchesIftb(*client, encoder, iftb_patches_);
+  ASSERT_TRUE(sc.ok()) << sc;
+
+  auto state = client->Process();
+  ASSERT_TRUE(state.ok()) << state.status();
+  ASSERT_EQ(*state, IFTClient::READY);
+
+  codepoints = ToCodepointsSet(client->GetFontData());
+  ASSERT_TRUE(codepoints.contains(chunk0_cp));
+  ASSERT_TRUE(codepoints.contains(chunk1_cp));
+  ASSERT_FALSE(codepoints.contains(chunk2_cp));
+  ASSERT_TRUE(codepoints.contains(chunk3_cp));
+  ASSERT_TRUE(codepoints.contains(chunk4_cp));
+
+  auto face = client->GetFontData().face();
+  auto cp_to_gid = FontHelper::UnicodeToGidMap(face.get());
+
+  ASSERT_TRUE(
+      !FontHelper::GlyfData(face.get(), cp_to_gid.at(chunk0_cp))->empty());
+  ASSERT_TRUE(
+      !FontHelper::GlyfData(face.get(), cp_to_gid.at(chunk1_cp))->empty());
+  ASSERT_TRUE(
+      !FontHelper::GlyfData(face.get(), cp_to_gid.at(chunk3_cp))->empty());
+  ASSERT_TRUE(
+      !FontHelper::GlyfData(face.get(), cp_to_gid.at(chunk4_cp))->empty());
+}
+
 TEST_F(IntegrationTest, MixedMode_OptionalFeatureTags) {
   Encoder encoder;
   auto sc = InitEncoderForIftbFeatureTest(encoder);
