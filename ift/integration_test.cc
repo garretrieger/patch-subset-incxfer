@@ -192,6 +192,7 @@ class IntegrationTest : public ::testing::Test {
   uint32_t chunk2_gid_non_cmapped = 900;
   uint32_t chunk3_gid = 169;
   uint32_t chunk4_gid = 103;
+  uint32_t chunk4_max_gid = 1032;
 
   static constexpr hb_tag_t kVrt3 = HB_TAG('v', 'r', 't', '3');
 };
@@ -466,6 +467,7 @@ TEST_F(IntegrationTest, MixedMode_NoRetainGids) {
 
   auto face = client->GetFontData().face();
   auto cp_to_gid = FontHelper::UnicodeToGidMap(face.get());
+  ASSERT_LT(hb_face_get_glyph_count(face.get()), chunk4_max_gid);
 
   ASSERT_TRUE(
       !FontHelper::GlyfData(face.get(), cp_to_gid.at(chunk0_cp))->empty());
