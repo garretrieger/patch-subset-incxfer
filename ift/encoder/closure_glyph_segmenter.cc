@@ -472,11 +472,8 @@ template <typename ConditionIt>
 StatusOr<bool> TryMergingACompositeCondition(
     SegmentationContext& context,
     const GlyphSegmentation& candidate_segmentation,
-    segment_index_t base_segment_index,
-    patch_id_t base_patch,  // TODO XXX is base_patch needed?
-    const ConditionIt& condition_it) {
+    segment_index_t base_segment_index, const ConditionIt& condition_it) {
   auto next_condition = condition_it;
-  next_condition++;
   while (next_condition != candidate_segmentation.Conditions().end()) {
     if (next_condition->IsFallback()) {
       // Merging the fallback will cause all segments to be merged into one,
@@ -518,7 +515,6 @@ StatusOr<bool> TryMergingABaseSegment(
     const GlyphSegmentation& candidate_segmentation,
     segment_index_t base_segment_index, const ConditionIt& condition_it) {
   auto next_condition = condition_it;
-  next_condition++;
   while (next_condition != candidate_segmentation.Conditions().end()) {
     if (!next_condition->IsExclusive()) {
       // Only interested in other base patches.
@@ -576,35 +572,92 @@ StatusOr<bool> IsPatchTooSmall(SegmentationContext& context,
 StatusOr<std::optional<segment_index_t>> MergeNextBaseSegment(
     SegmentationContext& context,
     const GlyphSegmentation& candidate_segmentation, uint32_t start_segment) {
+  segment_index_t segment_index = 0;
+  auto segment_it = context.segments.begin();
+  auto condition_it = candidate_segmentation.Conditions().begin();
+
+  // We're looking for input segments to merge. Those take one of two forms:
+  // 1. Input segments that are associated with an exclusive condition, where
+  //    the corresponding patch is too small.
+  // 2. Input segments that don't have an exclusive condition. These should be
+  //    merged away so that all non empty input segments will have an
+  //    exclusive patch.
+  //
+  // The loop below searches in segment order for the first segment which
+  // belongs to #1 or #2 and then tries to find a suitable merge.
+  //
+  // Segments prior to start_segment are skipped as these have already been
+  // processed.
+  //
+  // TODO(garretrieger): when locating things to merge we only ever search
+  // forwards, we should search forwards and backwards to find the next
+  // closest candidate. (eg. consider a segment that's too small and
+  // also the last segment. It won't ever be merged).
   hb_set_unique_ptr triggering_patches = make_hb_set();
-  for (auto condition = candidate_segmentation.Conditions().begin();
-       condition != candidate_segmentation.Conditions().end(); condition++) {
-    if (!condition->IsExclusive()) {
+  while (true) {
+    bool segments_done = segment_it == context.segments.end();
+    bool conditions_done =
+        condition_it == candidate_segmentation.Conditions().end();
+    if (segments_done && conditions_done) {
+      break;
+    }
+
+    if (!segments_done && hb_set_is_empty(segment_it->get())) {
+      segment_it++;
+      segment_index++;
       continue;
     }
 
-    patch_id_t base_patch = condition->activated();
-    segment_index_t base_segment_index =
-        (*condition->conditions().begin()->begin());
+    if (!conditions_done && !condition_it->IsExclusive()) {
+      condition_it++;
+      continue;
+    }
+
+    std::optional<segment_index_t> next_segment_index,
+        next_condition_segment_index;
+    if (!segments_done) {
+      next_segment_index = segment_index;
+    }
+    if (!conditions_done) {
+      next_condition_segment_index =
+          (*condition_it->conditions().begin()->begin());
+    }
+
+    segment_index_t base_segment_index;
+    std::optional<patch_id_t> base_patch;
+    if (next_segment_index.value_or(UINT32_MAX) <=
+        next_condition_segment_index.value_or(UINT32_MAX)) {
+      base_segment_index = *next_segment_index;
+      segment_it++;
+      segment_index++;
+    }
+
+    if (next_condition_segment_index.value_or(UINT32_MAX) <=
+        next_segment_index.value_or(UINT32_MAX)) {
+      base_segment_index = *next_condition_segment_index;
+      base_patch = condition_it->activated();
+      condition_it++;
+    }
+
     if (base_segment_index < start_segment) {
       // Already processed, skip
       continue;
     }
 
-    if (!TRY(IsPatchTooSmall(context, candidate_segmentation,
-                             base_segment_index, base_patch))) {
+    if (base_patch.has_value() &&
+        !TRY(IsPatchTooSmall(context, candidate_segmentation,
+                             base_segment_index, *base_patch))) {
       continue;
     }
 
     if (TRY(TryMergingACompositeCondition(context, candidate_segmentation,
-                                          base_segment_index, base_patch,
-                                          condition))) {
+                                          base_segment_index, condition_it))) {
       // Return to the parent method so it can reanalyze and reform groups
       return base_segment_index;
     }
 
     if (TRY(TryMergingABaseSegment(context, candidate_segmentation,
-                                   base_segment_index, condition))) {
+                                   base_segment_index, condition_it))) {
       // Return to the parent method so it can reanalyze and reform groups
       return base_segment_index;
     }

@@ -216,6 +216,79 @@ if ((s0 OR s1 OR s2 OR s3)) then p5
 )");
 }
 
+TEST_F(ClosureGlyphSegmenterTest, InputSegmentWithNoExclusivePatches) {
+  // In roboto M and 0x041C (Cyrillic Em) share the same glyph. So if the input
+  // code point segmentation has M and 0x041C in separate segments it's possible
+  // for one segment to not have associated exclusive patches since "M" glyph
+  // will be part of a conditional patch.
+  auto segmentation =
+      segmenter.CodepointToGlyphSegments(roboto.get(), {}, {{'M'}, {0x041C}});
+  ASSERT_TRUE(segmentation.ok()) << segmentation.status();
+
+  std::vector<btree_set<hb_codepoint_t>> expected_segments = {
+      {'M'},
+      {0x041C},
+  };
+  ASSERT_EQ(segmentation->Segments(), expected_segments);
+
+  // gid955 is the a composite glyph, which pulls in gid49
+  ASSERT_EQ(segmentation->ToString(),
+            R"(initial font: { gid0 }
+p0: { gid955 }
+p1: { gid49 }
+if (s1) then p0
+if ((s0 OR s1)) then p1
+)");
+}
+
+TEST_F(ClosureGlyphSegmenterTest,
+       MergeBases_InputSegmentWithNoExclusivePatches) {
+  // In roboto M and 0x041C (Cyrillic Em) share the same glyph. So if the input
+  // code point segmentation has M and 0x041C in separate segments it's possible
+  // for one segment to not have associated exclusive patches since "M" glyph
+  // will be part of a conditional patch.
+  //
+  // In this test merging is enabled which should detect that s0 has no
+  // exclusive patch and merge it into s1.
+  auto segmentation = segmenter.CodepointToGlyphSegments(roboto.get(), {},
+                                                         {{'M'}, {0x041C}}, 1);
+  ASSERT_TRUE(segmentation.ok()) << segmentation.status();
+
+  std::vector<btree_set<hb_codepoint_t>> expected_segments = {
+      {'M', 0x041C},
+      {},
+  };
+  ASSERT_EQ(segmentation->Segments(), expected_segments);
+
+  ASSERT_EQ(segmentation->ToString(),
+            R"(initial font: { gid0 }
+p0: { gid49, gid955 }
+if (s0) then p0
+)");
+}
+
+TEST_F(ClosureGlyphSegmenterTest,
+       MergeBases_MixedExclusiveNonExclusiveInputSegmentMerging) {
+  // This tests the merging can handle a mix of both non-exclusive and exclusive
+  // input segment merging
+  auto segmentation = segmenter.CodepointToGlyphSegments(
+      roboto.get(), {}, {{'M'}, {0x041C, 'f'}, {'i'}}, 500);
+  ASSERT_TRUE(segmentation.ok()) << segmentation.status();
+
+  std::vector<btree_set<hb_codepoint_t>> expected_segments = {
+      {'f', 'i', 'M', 0x041C},
+      {},
+      {},
+  };
+  ASSERT_EQ(segmentation->Segments(), expected_segments);
+
+  ASSERT_EQ(segmentation->ToString(),
+            R"(initial font: { gid0 }
+p0: { gid49, gid74, gid77, gid444, gid446, gid955 }
+if (s0) then p0
+)");
+}
+
 // TODO(garretrieger): add test where or_set glyphs are moved back to unmapped
 // due to found "additional conditions".
 
